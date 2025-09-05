@@ -9,6 +9,30 @@ interface ExcelSheetData {
   [sheetName: string]: (string | number)[][];
 }
 
+// Declare the ReactNativeWebView interface for TypeScript
+
+interface NativeMessage {
+  type: 'READY' | 'LOADED' | 'WEB_ERROR';
+  fileName?: string;
+  message?: string;
+}
+
+// Define incoming message types from React Native
+interface IncomingMessage {
+  type: 'LOAD_DOCUMENT';
+  fileData: string;
+  fileName: string;
+}
+
+// Declare the ReactNativeWebView interface for TypeScript
+declare global {
+  interface Window {
+    ReactNativeWebView?: {
+      postMessage: (message: string) => void;
+    };
+  }
+}
+
 const DocumentViewer: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileType, setFileType] = useState<FileType>('');
@@ -16,7 +40,7 @@ const DocumentViewer: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [excelData, setExcelData] = useState<ExcelSheetData | null>(null);
   const [loadSource, setLoadSource] = useState<'upload' | 'url' | 'mobile'>('upload');
-  const [isEmbedded, setIsEmbedded] = useState<boolean>(false); // State for embedded mode
+  const [isEmbedded, setIsEmbedded] = useState<boolean>(false);
   const viewerRef = useRef<HTMLDivElement | null>(null);
 
   const getFileIcon = (type: FileType): JSX.Element => {
@@ -24,6 +48,18 @@ const DocumentViewer: React.FC = () => {
     if (type.includes('sheet') || type.includes('excel')) return <FileSpreadsheet className="w-6 h-6" />;
     if (type.includes('presentation') || type.includes('powerpoint')) return <Presentation className="w-6 h-6" />;
     return <FileText className="w-6 h-6" />;
+  };
+
+  // Function to post messages back to React Native
+  const postMessageToNative = (message: NativeMessage) => {
+    if (window.ReactNativeWebView) {
+      window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    }
+  };
+
+  // Function to post errors back to React Native
+  const postErrorToNative = (message: string) => {
+    postMessageToNative({ type: 'WEB_ERROR', message });
   };
 
   // Check URL parameters on component mount
@@ -35,34 +71,50 @@ const DocumentViewer: React.FC = () => {
 
     if (viewMode === 'embedded') {
       setIsEmbedded(true);
+      console.log('Running in embedded mode');
     }
     
     if (fileUrl && fileName) {
       setLoadSource('url');
       loadFileFromUrl(fileUrl, fileName);
     }
+
+    // Send ready signal to React Native when in embedded mode
+    if (viewMode === 'embedded' && window.ReactNativeWebView) {
+      // Small delay to ensure everything is loaded
+      setTimeout(() => {
+        postMessageToNative({ type: 'READY' });
+        console.log('Sent READY signal to React Native');
+      }, 100);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Listen for postMessage from React Native WebView
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'LOAD_DOCUMENT') {
-          setLoadSource('mobile');
-          const { fileData, fileName } = data;
-          loadFileFromBase64(fileData, fileName);
+  // Listen for postMessage from React Native WebView
+    useEffect(() => {
+      const handleMessage = (event: MessageEvent) => {
+        console.log('Message received from native:', event.data);
+        try {
+          const data: IncomingMessage = JSON.parse(event.data);
+          if (data.type === 'LOAD_DOCUMENT') {
+            setLoadSource('mobile');
+            const { fileData, fileName } = data;
+            console.log('Loading document:', fileName);
+            loadFileFromBase64(fileData, fileName);
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error parsing message';
+          console.error('Error parsing message:', errorMessage);
+          postErrorToNative(errorMessage);
         }
-      } catch (error) {
-        console.error('Error parsing message:', error);
-      }
-    };
+      };
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      window.addEventListener('message', handleMessage);
+      return () => window.removeEventListener('message', handleMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
 
   const loadFileFromUrl = async (url: string, fileName: string) => {
     setIsLoading(true);
@@ -81,16 +133,11 @@ const DocumentViewer: React.FC = () => {
       setSelectedFile(file);
       await processFile(file);
       
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: 'LOADED', fileName }, '*');
-      }
+      postMessageToNative({ type: 'LOADED', fileName });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error loading file from URL';
       setError(errorMessage);
-      
-      if (window.parent !== window) {
-        window.parent.postMessage({ type: 'ERROR', message: errorMessage }, '*');
-      }
+      postErrorToNative(errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -102,70 +149,115 @@ const DocumentViewer: React.FC = () => {
     setExcelData(null);
     
     try {
+      console.log(`Loading file from Base64: ${fileName}, data length: ${base64Data.length}`);
+      
+      // Decode base64
       const byteCharacters = atob(base64Data);
+      console.log('Base64 decoded successfully, length:', byteCharacters.length);
+      
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray]);
+      console.log('Blob created successfully, size:', blob.size);
       
       const file = new File([blob], fileName);
       setSelectedFile(file);
+      console.log('File object created:', file);
+      
       await processFile(file);
+      console.log('File processed successfully');
+      
+      postMessageToNative({ type: 'LOADED', fileName });
       
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error loading file from data';
+      console.error('Error in loadFileFromBase64:', errorMessage, err);
       setError(errorMessage);
+      postErrorToNative(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
   const processFile = async (file: File) => {
+    console.log('Processing file:', file.name, 'type:', file.type);
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
+    console.log('File extension:', fileExtension);
     
-    if (fileExtension === 'docx' || fileExtension === 'doc') {
-      await processWordDocument(file);
-    } 
-    else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
-      await processExcelDocument(file);
-    }
-    else if (fileExtension === 'pptx' || fileExtension === 'ppt') {
-      processPowerPointDocument();
-    }
-    else {
-      throw new Error('Unsupported file type. Please upload Word (.docx, .doc), Excel (.xlsx, .xls), or PowerPoint (.pptx, .ppt) files.');
+    try {
+      if (fileExtension === 'docx' || fileExtension === 'doc') {
+        await processWordDocument(file);
+      } 
+      else if (fileExtension === 'xlsx' || fileExtension === 'xls') {
+        await processExcelDocument(file);
+      }
+      else if (fileExtension === 'pptx' || fileExtension === 'ppt') {
+        processPowerPointDocument();
+      }
+      else {
+        throw new Error('Unsupported file type. Please upload Word (.docx, .doc), Excel (.xlsx, .xls), or PowerPoint (.pptx, .ppt) files.');
+      }
+    } catch (error) {
+      console.error('Error in processFile:', error);
+      throw error;
     }
   };
 
   const processWordDocument = async (file: File): Promise<void> => {
+    console.log('Processing Word document');
     setFileType('word');
     if (!file) return;
     
-    const arrayBuffer = await file.arrayBuffer();
-    if (viewerRef.current) {
-      viewerRef.current.innerHTML = '';
-      await renderAsync(arrayBuffer, viewerRef.current);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      console.log('ArrayBuffer created for Word document, size:', arrayBuffer.byteLength);
+      
+      if (viewerRef.current) {
+        viewerRef.current.innerHTML = '';
+        console.log('Starting docx-preview render');
+        await renderAsync(arrayBuffer, viewerRef.current);
+        console.log('Word document rendered successfully');
+      } else {
+        throw new Error('Viewer container not available');
+      }
+    } catch (error) {
+      console.error('Error processing Word document:', error);
+      throw error;
     }
   };
 
   const processExcelDocument = async (file: File): Promise<void> => {
+    console.log('Processing Excel document');
     setFileType('excel');
-    const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
     
-    const sheetsData: ExcelSheetData = {};
-    workbook.SheetNames.forEach((sheetName: string) => {
-      const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as (string | number)[][];
-      sheetsData[sheetName] = jsonData;
-    });
-    
-    setExcelData(sheetsData);
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      console.log('ArrayBuffer created for Excel document, size:', arrayBuffer.byteLength);
+      
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      console.log('Excel workbook loaded, sheets:', workbook.SheetNames);
+      
+      const sheetsData: ExcelSheetData = {};
+      workbook.SheetNames.forEach((sheetName: string) => {
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as (string | number)[][];
+        sheetsData[sheetName] = jsonData;
+        console.log(`Sheet ${sheetName} processed, rows: ${jsonData.length}`);
+      });
+      
+      setExcelData(sheetsData);
+      console.log('Excel document processed successfully');
+    } catch (error) {
+      console.error('Error processing Excel document:', error);
+      throw error;
+    }
   };
 
   const processPowerPointDocument = (): void => {
+    console.log('Processing PowerPoint document');
     setFileType('powerpoint');
   };
 
@@ -212,7 +304,9 @@ const DocumentViewer: React.FC = () => {
   );
 
   const formatFileSize = (bytes: number): string => (bytes / 1024 / 1024).toFixed(2);
+  
   const capitalizeFileType = (type: FileType): string => type.charAt(0).toUpperCase() + type.slice(1);
+  
   const getLoadSourceIcon = () => {
     switch (loadSource) {
       case 'mobile': return <Smartphone className="w-5 h-5 mr-1 text-blue-600" />;
@@ -220,6 +314,7 @@ const DocumentViewer: React.FC = () => {
       default: return <Upload className="w-5 h-5 mr-1 text-purple-600" />;
     }
   };
+  
   const getLoadSourceText = () => {
     switch (loadSource) {
       case 'mobile': return 'Loaded from Mobile App';
@@ -229,9 +324,10 @@ const DocumentViewer: React.FC = () => {
   };
 
   return (
-    <div className={isEmbedded ? "bg-white" : "min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50"}>
-      <div className={isEmbedded ? "" : "container mx-auto px-4 py-8"}>
+    <div className={isEmbedded ? "bg-white min-h-screen" : "min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50"}>
+      <div className={isEmbedded ? "px-2 py-2" : "container mx-auto px-4 py-8"}>
         
+        {/* Header - Only show if NOT embedded */}
         {!isEmbedded && (
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-gray-800 mb-2">Document Viewer</h1>
@@ -239,6 +335,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* Upload Section - Only show if NOT embedded and no file is loaded */}
         {!isEmbedded && !selectedFile && (
           <div className="max-w-2xl mx-auto mb-8">
             <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-dashed border-gray-300 hover:border-blue-400 transition-colors">
@@ -249,7 +346,9 @@ const DocumentViewer: React.FC = () => {
                     Choose a document to upload
                   </span>
                   <input
-                    id="file-upload" type="file" className="hidden"
+                    id="file-upload"
+                    type="file"
+                    className="hidden"
                     accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx"
                     onChange={handleFileUpload}
                   />
@@ -265,6 +364,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* Loading State */}
         {isLoading && (
           <div className="text-center py-8">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -272,8 +372,9 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* Error State */}
         {error && (
-          <div className="max-w-2xl mx-auto mb-8">
+          <div className={isEmbedded ? "mb-4" : "max-w-2xl mx-auto mb-8"}>
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center">
               <AlertCircle className="w-5 h-5 text-red-500 mr-3" />
               <span className="text-red-700">{error}</span>
@@ -281,6 +382,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* File Info - Only show if NOT embedded */}
         {selectedFile && !isLoading && !isEmbedded && (
           <div className="max-w-4xl mx-auto mb-6">
             <div className="bg-white rounded-lg shadow-md p-4">
@@ -309,21 +411,23 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* Word Document Content */}
         {fileType === 'word' && (
           <div className={isEmbedded ? "" : "max-w-4xl mx-auto"}>
             <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
               <div 
                 ref={viewerRef}
-                className="w-full min-h-screen" // Use min-h-screen in embedded mode
+                className={`w-full ${isEmbedded ? 'min-h-screen' : 'min-h-96'} overflow-auto border ${isEmbedded ? 'border-0' : 'border-gray-200'} rounded-lg p-4`}
                 style={{ backgroundColor: 'white' }}
               />
             </div>
           </div>
         )}
 
+        {/* PowerPoint Content */}
         {fileType === 'powerpoint' && (
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-white rounded-xl shadow-lg p-8">
+          <div className={isEmbedded ? "" : "max-w-4xl mx-auto"}>
+            <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
               <div className="text-center py-16">
                 <Presentation className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">PowerPoint Preview</h3>
@@ -338,6 +442,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* Excel Content */}
         {excelData && (
           <div className={isEmbedded ? "" : "max-w-6xl mx-auto"}>
             <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
@@ -349,6 +454,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
+        {/* Features List - Only show if NOT embedded and no file is loaded */}
         {!isEmbedded && !selectedFile && (
           <div className="max-w-4xl mx-auto mt-16">
             <div className="grid md:grid-cols-3 gap-8">
@@ -359,6 +465,7 @@ const DocumentViewer: React.FC = () => {
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">Word Documents</h3>
                 <p className="text-gray-600">View .doc and .docx files with full formatting preserved</p>
               </div>
+              
               <div className="text-center">
                 <div className="bg-green-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                   <FileSpreadsheet className="w-8 h-8 text-green-600" />
@@ -366,6 +473,7 @@ const DocumentViewer: React.FC = () => {
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">Excel Spreadsheets</h3>
                 <p className="text-gray-600">Display .xls and .xlsx files with all worksheets</p>
               </div>
+              
               <div className="text-center">
                 <div className="bg-purple-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                   <Presentation className="w-8 h-8 text-purple-600" />
@@ -374,6 +482,8 @@ const DocumentViewer: React.FC = () => {
                 <p className="text-gray-600">Preview .ppt and .pptx presentations</p>
               </div>
             </div>
+
+            {/* Integration Info */}
             <div className="mt-16 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-8">
               <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">Mobile Integration</h3>
               <div className="grid md:grid-cols-2 gap-8">
