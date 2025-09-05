@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, type ChangeEvent, type JSX, useRef } from 'react';
-import { Upload, FileText, FileSpreadsheet, Presentation, AlertCircle, Eye, Smartphone, Globe } from 'lucide-react';
+import { Upload, Presentation } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { renderAsync } from 'docx-preview';
 
@@ -9,22 +9,18 @@ interface ExcelSheetData {
   [sheetName: string]: (string | number)[][];
 }
 
-// Declare the ReactNativeWebView interface for TypeScript
-
 interface NativeMessage {
   type: 'READY' | 'LOADED' | 'WEB_ERROR';
   fileName?: string;
   message?: string;
 }
 
-// Define incoming message types from React Native
 interface IncomingMessage {
   type: 'LOAD_DOCUMENT';
   fileData: string;
   fileName: string;
 }
 
-// Declare the ReactNativeWebView interface for TypeScript
 declare global {
   interface Window {
     ReactNativeWebView?: {
@@ -41,119 +37,89 @@ const DocumentViewer: React.FC = () => {
   const [excelData, setExcelData] = useState<ExcelSheetData | null>(null);
   const [loadSource, setLoadSource] = useState<'upload' | 'url' | 'mobile'>('upload');
   const [isEmbedded, setIsEmbedded] = useState<boolean>(false);
+  const [debugInfo, setDebugInfo] = useState<string>('');
   const viewerRef = useRef<HTMLDivElement | null>(null);
 
-  const getFileIcon = (type: FileType): JSX.Element => {
-    if (type.includes('word') || type.includes('document')) return <FileText className="w-6 h-6" />;
-    if (type.includes('sheet') || type.includes('excel')) return <FileSpreadsheet className="w-6 h-6" />;
-    if (type.includes('presentation') || type.includes('powerpoint')) return <Presentation className="w-6 h-6" />;
-    return <FileText className="w-6 h-6" />;
-  };
 
-  // Function to post messages back to React Native
+
   const postMessageToNative = (message: NativeMessage) => {
+    console.log('Posting message to native:', message);
     if (window.ReactNativeWebView) {
       window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    } else {
+      console.log('ReactNativeWebView not available - probably in browser');
     }
   };
 
-  // Function to post errors back to React Native
   const postErrorToNative = (message: string) => {
     postMessageToNative({ type: 'WEB_ERROR', message });
   };
 
-  // Check URL parameters on component mount
+  const addDebugInfo = (info: string) => {
+    console.log('DEBUG:', info);
+    setDebugInfo(prev => prev + '\n' + new Date().toLocaleTimeString() + ': ' + info);
+  };
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const fileUrl = urlParams.get('fileUrl');
-    const fileName = urlParams.get('fileName');
     const viewMode = urlParams.get('viewMode');
 
     if (viewMode === 'embedded') {
       setIsEmbedded(true);
-      console.log('Running in embedded mode');
-    }
-    
-    if (fileUrl && fileName) {
-      setLoadSource('url');
-      loadFileFromUrl(fileUrl, fileName);
-    }
-
-    // Send ready signal to React Native when in embedded mode
-    if (viewMode === 'embedded' && window.ReactNativeWebView) {
-      // Small delay to ensure everything is loaded
+      addDebugInfo('Running in embedded mode');
+      
+      // Send ready signal
       setTimeout(() => {
         postMessageToNative({ type: 'READY' });
-        console.log('Sent READY signal to React Native');
-      }, 100);
+        addDebugInfo('Sent READY signal to React Native');
+      }, 500);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Listen for postMessage from React Native WebView
-  // Listen for postMessage from React Native WebView
-    useEffect(() => {
-      const handleMessage = (event: MessageEvent) => {
-        console.log('Message received from native:', event.data);
-        try {
-          const data: IncomingMessage = JSON.parse(event.data);
-          if (data.type === 'LOAD_DOCUMENT') {
-            setLoadSource('mobile');
-            const { fileData, fileName } = data;
-            console.log('Loading document:', fileName);
-            loadFileFromBase64(fileData, fileName);
-          }
-        } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error parsing message';
-          console.error('Error parsing message:', errorMessage);
-          postErrorToNative(errorMessage);
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      addDebugInfo(`Received message: ${event.data}`);
+      
+      try {
+        const data: IncomingMessage = JSON.parse(event.data);
+        addDebugInfo(`Parsed message type: ${data.type}`);
+        
+        if (data.type === 'LOAD_DOCUMENT') {
+          addDebugInfo(`Loading document: ${data.fileName}, data length: ${data.fileData.length}`);
+          setLoadSource('mobile');
+          loadFileFromBase64(data.fileData, data.fileName);
         }
-      };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error parsing message';
+        addDebugInfo(`Error parsing message: ${errorMessage}`);
+        postErrorToNative(errorMessage);
+      }
+    };
 
-      window.addEventListener('message', handleMessage);
-      return () => window.removeEventListener('message', handleMessage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-
-
-  const loadFileFromUrl = async (url: string, fileName: string) => {
-    setIsLoading(true);
-    setError('');
-    setExcelData(null);
+    // Listen to both 'message' and 'postMessage' events
+    window.addEventListener('message', handleMessage);
     
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error('Failed to fetch file');
-      
-      const arrayBuffer = await response.arrayBuffer();
-      const file = new File([arrayBuffer], fileName, {
-        type: response.headers.get('content-type') || 'application/octet-stream'
-      });
-      
-      setSelectedFile(file);
-      await processFile(file);
-      
-      postMessageToNative({ type: 'LOADED', fileName });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Error loading file from URL';
-      setError(errorMessage);
-      postErrorToNative(errorMessage);
-    } finally {
-      setIsLoading(false);
+    // Also listen for React Native WebView messages directly
+    if (window.ReactNativeWebView) {
+      addDebugInfo('ReactNativeWebView detected');
     }
-  };
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const loadFileFromBase64 = async (base64Data: string, fileName: string) => {
     setIsLoading(true);
     setError('');
     setExcelData(null);
+    addDebugInfo(`Starting loadFileFromBase64 for ${fileName}`);
     
     try {
-      console.log(`Loading file from Base64: ${fileName}, data length: ${base64Data.length}`);
-      
-      // Decode base64
+      addDebugInfo('Decoding base64...');
       const byteCharacters = atob(base64Data);
-      console.log('Base64 decoded successfully, length:', byteCharacters.length);
+      addDebugInfo(`Base64 decoded: ${byteCharacters.length} bytes`);
       
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
@@ -161,20 +127,20 @@ const DocumentViewer: React.FC = () => {
       }
       const byteArray = new Uint8Array(byteNumbers);
       const blob = new Blob([byteArray]);
-      console.log('Blob created successfully, size:', blob.size);
+      addDebugInfo(`Blob created: ${blob.size} bytes`);
       
       const file = new File([blob], fileName);
       setSelectedFile(file);
-      console.log('File object created:', file);
+      addDebugInfo('File object created, starting processFile...');
       
       await processFile(file);
-      console.log('File processed successfully');
+      addDebugInfo('File processed successfully');
       
       postMessageToNative({ type: 'LOADED', fileName });
       
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error loading file from data';
-      console.error('Error in loadFileFromBase64:', errorMessage, err);
+      addDebugInfo(`Error: ${errorMessage}`);
       setError(errorMessage);
       postErrorToNative(errorMessage);
     } finally {
@@ -183,9 +149,9 @@ const DocumentViewer: React.FC = () => {
   };
 
   const processFile = async (file: File) => {
-    console.log('Processing file:', file.name, 'type:', file.type);
+    addDebugInfo(`Processing file: ${file.name}, size: ${file.size}`);
     const fileExtension = file.name.split('.').pop()?.toLowerCase();
-    console.log('File extension:', fileExtension);
+    addDebugInfo(`File extension: ${fileExtension}`);
     
     try {
       if (fileExtension === 'docx' || fileExtension === 'doc') {
@@ -198,66 +164,61 @@ const DocumentViewer: React.FC = () => {
         processPowerPointDocument();
       }
       else {
-        throw new Error('Unsupported file type. Please upload Word (.docx, .doc), Excel (.xlsx, .xls), or PowerPoint (.pptx, .ppt) files.');
+        throw new Error('Unsupported file type');
       }
     } catch (error) {
-      console.error('Error in processFile:', error);
+      addDebugInfo(`Error in processFile: ${error}`);
       throw error;
     }
   };
 
   const processWordDocument = async (file: File): Promise<void> => {
-    console.log('Processing Word document');
+    addDebugInfo('Processing Word document...');
     setFileType('word');
-    if (!file) return;
     
     try {
       const arrayBuffer = await file.arrayBuffer();
-      console.log('ArrayBuffer created for Word document, size:', arrayBuffer.byteLength);
+      addDebugInfo(`ArrayBuffer size: ${arrayBuffer.byteLength}`);
       
       if (viewerRef.current) {
+        addDebugInfo('Clearing viewer and rendering...');
         viewerRef.current.innerHTML = '';
-        console.log('Starting docx-preview render');
         await renderAsync(arrayBuffer, viewerRef.current);
-        console.log('Word document rendered successfully');
+        addDebugInfo('Word document rendered successfully!');
       } else {
         throw new Error('Viewer container not available');
       }
     } catch (error) {
-      console.error('Error processing Word document:', error);
+      addDebugInfo(`Error processing Word document: ${error}`);
       throw error;
     }
   };
 
   const processExcelDocument = async (file: File): Promise<void> => {
-    console.log('Processing Excel document');
+    addDebugInfo('Processing Excel document...');
     setFileType('excel');
     
     try {
       const arrayBuffer = await file.arrayBuffer();
-      console.log('ArrayBuffer created for Excel document, size:', arrayBuffer.byteLength);
-      
       const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-      console.log('Excel workbook loaded, sheets:', workbook.SheetNames);
       
       const sheetsData: ExcelSheetData = {};
       workbook.SheetNames.forEach((sheetName: string) => {
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as (string | number)[][];
         sheetsData[sheetName] = jsonData;
-        console.log(`Sheet ${sheetName} processed, rows: ${jsonData.length}`);
       });
       
       setExcelData(sheetsData);
-      console.log('Excel document processed successfully');
+      addDebugInfo('Excel document processed successfully');
     } catch (error) {
-      console.error('Error processing Excel document:', error);
+      addDebugInfo(`Error processing Excel document: ${error}`);
       throw error;
     }
   };
 
   const processPowerPointDocument = (): void => {
-    console.log('Processing PowerPoint document');
+    addDebugInfo('Processing PowerPoint document...');
     setFileType('powerpoint');
   };
 
@@ -303,31 +264,41 @@ const DocumentViewer: React.FC = () => {
     </div>
   );
 
-  const formatFileSize = (bytes: number): string => (bytes / 1024 / 1024).toFixed(2);
-  
-  const capitalizeFileType = (type: FileType): string => type.charAt(0).toUpperCase() + type.slice(1);
-  
-  const getLoadSourceIcon = () => {
-    switch (loadSource) {
-      case 'mobile': return <Smartphone className="w-5 h-5 mr-1 text-blue-600" />;
-      case 'url': return <Globe className="w-5 h-5 mr-1 text-green-600" />;
-      default: return <Upload className="w-5 h-5 mr-1 text-purple-600" />;
-    }
-  };
-  
-  const getLoadSourceText = () => {
-    switch (loadSource) {
-      case 'mobile': return 'Loaded from Mobile App';
-      case 'url': return 'Loaded from URL';
-      default: return 'Uploaded from Device';
-    }
-  };
+  // Debug Panel for embedded mode
+  if (isEmbedded && (!selectedFile || error)) {
+    return (
+      <div className="p-4 bg-white min-h-screen">
+        <h2 className="text-lg font-bold mb-4">Document Viewer Debug</h2>
+        
+        {isLoading && (
+          <div className="mb-4">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            <span className="ml-2">Processing document...</span>
+            <div className="mb-2">
+            <strong>Load Source:</strong> {loadSource}
+          </div>
+
+          </div>
+        )}
+        
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+        
+        <div className="bg-gray-50 p-4 rounded">
+          <h3 className="font-semibold mb-2">Debug Log:</h3>
+          <pre className="text-xs whitespace-pre-wrap">{debugInfo || 'No debug info yet...'}</pre>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={isEmbedded ? "bg-white min-h-screen" : "min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50"}>
       <div className={isEmbedded ? "px-2 py-2" : "container mx-auto px-4 py-8"}>
         
-        {/* Header - Only show if NOT embedded */}
         {!isEmbedded && (
           <div className="text-center mb-8">
             <h1 className="text-4xl font-bold text-gray-800 mb-2">Document Viewer</h1>
@@ -335,7 +306,6 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* Upload Section - Only show if NOT embedded and no file is loaded */}
         {!isEmbedded && !selectedFile && (
           <div className="max-w-2xl mx-auto mb-8">
             <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-dashed border-gray-300 hover:border-blue-400 transition-colors">
@@ -356,160 +326,43 @@ const DocumentViewer: React.FC = () => {
                 <p className="text-sm text-gray-500 mt-2">
                   Supports Word (.doc, .docx), Excel (.xls, .xlsx), and PowerPoint (.ppt, .pptx)
                 </p>
-                <p className="text-xs text-gray-400 mt-3">
-                  💡 This viewer can also be used from mobile apps via WebView integration
-                </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Loading State */}
-        {isLoading && (
-          <div className="text-center py-8">
-            <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="mt-2 text-gray-600">Processing document...</p>
-          </div>
-        )}
-
-        {/* Error State */}
-        {error && (
-          <div className={isEmbedded ? "mb-4" : "max-w-2xl mx-auto mb-8"}>
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center">
-              <AlertCircle className="w-5 h-5 text-red-500 mr-3" />
-              <span className="text-red-700">{error}</span>
-            </div>
-          </div>
-        )}
-
-        {/* File Info - Only show if NOT embedded */}
-        {selectedFile && !isLoading && !isEmbedded && (
-          <div className="max-w-4xl mx-auto mb-6">
-            <div className="bg-white rounded-lg shadow-md p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center">
-                  {getFileIcon(fileType)}
-                  <div className="ml-3">
-                    <h3 className="font-medium text-gray-800">{selectedFile.name}</h3>
-                    <p className="text-sm text-gray-500">
-                      {formatFileSize(selectedFile.size)} MB • {capitalizeFileType(fileType)}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end">
-                  <div className="flex items-center text-green-600 mb-1">
-                    <Eye className="w-5 h-5 mr-1" />
-                    <span className="text-sm font-medium">Viewing</span>
-                  </div>
-                  <div className="flex items-center text-gray-500">
-                    {getLoadSourceIcon()}
-                    <span className="text-xs">{getLoadSourceText()}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Word Document Content */}
         {fileType === 'word' && (
           <div className={isEmbedded ? "" : "max-w-4xl mx-auto"}>
             <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
               <div 
                 ref={viewerRef}
-                className={`w-full ${isEmbedded ? 'min-h-screen' : 'min-h-96'} overflow-auto border ${isEmbedded ? 'border-0' : 'border-gray-200'} rounded-lg p-4`}
+                className={`w-full ${isEmbedded ? 'min-h-screen' : 'min-h-96'} overflow-auto`}
                 style={{ backgroundColor: 'white' }}
               />
             </div>
           </div>
         )}
 
-        {/* PowerPoint Content */}
         {fileType === 'powerpoint' && (
-          <div className={isEmbedded ? "" : "max-w-4xl mx-auto"}>
-            <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
-              <div className="text-center py-16">
-                <Presentation className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">PowerPoint Preview</h3>
-                <p className="text-gray-600 mb-4">
-                  PowerPoint files are loaded but preview is not yet implemented.
-                </p>
-                <p className="text-sm text-gray-500">
-                  File: {selectedFile?.name}
-                </p>
-              </div>
-            </div>
+          <div className="text-center py-16">
+            <Presentation className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-gray-800 mb-2">PowerPoint Preview</h3>
+            <p className="text-gray-600">PowerPoint files are loaded but preview is not yet implemented.</p>
           </div>
         )}
 
-        {/* Excel Content */}
         {excelData && (
           <div className={isEmbedded ? "" : "max-w-6xl mx-auto"}>
             <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
-              {!isEmbedded && <h2 className="text-2xl font-bold text-gray-800 mb-6">Excel Workbook</h2>}
               {Object.entries(excelData).map(([sheetName, sheetData]) => 
                 renderExcelSheet(sheetData, sheetName)
               )}
             </div>
           </div>
         )}
-
-        {/* Features List - Only show if NOT embedded and no file is loaded */}
-        {!isEmbedded && !selectedFile && (
-          <div className="max-w-4xl mx-auto mt-16">
-            <div className="grid md:grid-cols-3 gap-8">
-              <div className="text-center">
-                <div className="bg-blue-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-8 h-8 text-blue-600" />
-                </div>
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">Word Documents</h3>
-                <p className="text-gray-600">View .doc and .docx files with full formatting preserved</p>
-              </div>
-              
-              <div className="text-center">
-                <div className="bg-green-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                  <FileSpreadsheet className="w-8 h-8 text-green-600" />
-                </div>
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">Excel Spreadsheets</h3>
-                <p className="text-gray-600">Display .xls and .xlsx files with all worksheets</p>
-              </div>
-              
-              <div className="text-center">
-                <div className="bg-purple-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
-                  <Presentation className="w-8 h-8 text-purple-600" />
-                </div>
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">PowerPoint</h3>
-                <p className="text-gray-600">Preview .ppt and .pptx presentations</p>
-              </div>
-            </div>
-
-            {/* Integration Info */}
-            <div className="mt-16 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-8">
-              <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">Mobile Integration</h3>
-              <div className="grid md:grid-cols-2 gap-8">
-                <div>
-                  <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                    <Globe className="w-5 h-5 mr-2 text-green-600" />
-                    URL Parameters
-                  </h4>
-                  <p className="text-gray-600 text-sm">
-                    Load documents via URL: <code className="bg-gray-200 px-2 py-1 rounded">?fileUrl=...&fileName=...</code>
-                  </p>
-                </div>
-                <div>
-                  <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                    <Smartphone className="w-5 h-5 mr-2 text-blue-600" />
-                    WebView Integration
-                  </h4>
-                  <p className="text-gray-600 text-sm">
-                    Accepts documents via postMessage from React Native WebView
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
+
+     
     </div>
   );
 };
