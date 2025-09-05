@@ -247,7 +247,7 @@ useEffect(() => {
   const renderExcelSheet = (sheetData: (string | number)[][], sheetName: string): JSX.Element => (
     <div key={sheetName} className="mb-8">
       <h3 className="text-lg font-semibold mb-4 text-gray-800">{sheetName}</h3>
-      <div className="overflow-auto max-h-96 border rounded-lg">
+      <div className="overflow-auto  border rounded-lg">
         <table className="min-w-full bg-white">
           <tbody>
             {sheetData.map((row, rowIndex) => (
