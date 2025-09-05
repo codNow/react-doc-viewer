@@ -16,6 +16,7 @@ const DocumentViewer: React.FC = () => {
   const [error, setError] = useState<string>('');
   const [excelData, setExcelData] = useState<ExcelSheetData | null>(null);
   const [loadSource, setLoadSource] = useState<'upload' | 'url' | 'mobile'>('upload');
+  const [isEmbedded, setIsEmbedded] = useState<boolean>(false); // State for embedded mode
   const viewerRef = useRef<HTMLDivElement | null>(null);
 
   const getFileIcon = (type: FileType): JSX.Element => {
@@ -30,6 +31,11 @@ const DocumentViewer: React.FC = () => {
     const urlParams = new URLSearchParams(window.location.search);
     const fileUrl = urlParams.get('fileUrl');
     const fileName = urlParams.get('fileName');
+    const viewMode = urlParams.get('viewMode');
+
+    if (viewMode === 'embedded') {
+      setIsEmbedded(true);
+    }
     
     if (fileUrl && fileName) {
       setLoadSource('url');
@@ -75,7 +81,6 @@ const DocumentViewer: React.FC = () => {
       setSelectedFile(file);
       await processFile(file);
       
-      // Notify parent (if in iframe/webview) that file loaded successfully
       if (window.parent !== window) {
         window.parent.postMessage({ type: 'LOADED', fileName }, '*');
       }
@@ -83,7 +88,6 @@ const DocumentViewer: React.FC = () => {
       const errorMessage = err instanceof Error ? err.message : 'Error loading file from URL';
       setError(errorMessage);
       
-      // Notify parent of error
       if (window.parent !== window) {
         window.parent.postMessage({ type: 'ERROR', message: errorMessage }, '*');
       }
@@ -98,7 +102,6 @@ const DocumentViewer: React.FC = () => {
     setExcelData(null);
     
     try {
-      // Convert base64 to blob
       const byteCharacters = atob(base64Data);
       const byteNumbers = new Array(byteCharacters.length);
       for (let i = 0; i < byteCharacters.length; i++) {
@@ -114,8 +117,6 @@ const DocumentViewer: React.FC = () => {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Error loading file from data';
       setError(errorMessage);
-      
-   
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +145,6 @@ const DocumentViewer: React.FC = () => {
     
     const arrayBuffer = await file.arrayBuffer();
     if (viewerRef.current) {
-      // Clear previous content
       viewerRef.current.innerHTML = '';
       await renderAsync(arrayBuffer, viewerRef.current);
     }
@@ -211,14 +211,8 @@ const DocumentViewer: React.FC = () => {
     </div>
   );
 
-  const formatFileSize = (bytes: number): string => {
-    return (bytes / 1024 / 1024).toFixed(2);
-  };
-
-  const capitalizeFileType = (type: FileType): string => {
-    return type.charAt(0).toUpperCase() + type.slice(1);
-  };
-
+  const formatFileSize = (bytes: number): string => (bytes / 1024 / 1024).toFixed(2);
+  const capitalizeFileType = (type: FileType): string => type.charAt(0).toUpperCase() + type.slice(1);
   const getLoadSourceIcon = () => {
     switch (loadSource) {
       case 'mobile': return <Smartphone className="w-5 h-5 mr-1 text-blue-600" />;
@@ -226,7 +220,6 @@ const DocumentViewer: React.FC = () => {
       default: return <Upload className="w-5 h-5 mr-1 text-purple-600" />;
     }
   };
-
   const getLoadSourceText = () => {
     switch (loadSource) {
       case 'mobile': return 'Loaded from Mobile App';
@@ -236,16 +229,17 @@ const DocumentViewer: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      <div className="container mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">Document Viewer</h1>
-          <p className="text-gray-600">Upload and view Word, Excel, and PowerPoint files</p>
-        </div>
+    <div className={isEmbedded ? "bg-white" : "min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50"}>
+      <div className={isEmbedded ? "" : "container mx-auto px-4 py-8"}>
+        
+        {!isEmbedded && (
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold text-gray-800 mb-2">Document Viewer</h1>
+            <p className="text-gray-600">Upload and view Word, Excel, and PowerPoint files</p>
+          </div>
+        )}
 
-        {/* Upload Section - Only show if no file is loaded from external source */}
-        {!selectedFile && (
+        {!isEmbedded && !selectedFile && (
           <div className="max-w-2xl mx-auto mb-8">
             <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-dashed border-gray-300 hover:border-blue-400 transition-colors">
               <div className="text-center">
@@ -255,9 +249,7 @@ const DocumentViewer: React.FC = () => {
                     Choose a document to upload
                   </span>
                   <input
-                    id="file-upload"
-                    type="file"
-                    className="hidden"
+                    id="file-upload" type="file" className="hidden"
                     accept=".doc,.docx,.xls,.xlsx,.ppt,.pptx"
                     onChange={handleFileUpload}
                   />
@@ -273,7 +265,6 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* Loading State */}
         {isLoading && (
           <div className="text-center py-8">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -281,7 +272,6 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* Error State */}
         {error && (
           <div className="max-w-2xl mx-auto mb-8">
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center">
@@ -291,8 +281,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* File Info */}
-        {selectedFile && !isLoading && (
+        {selectedFile && !isLoading && !isEmbedded && (
           <div className="max-w-4xl mx-auto mb-6">
             <div className="bg-white rounded-lg shadow-md p-4">
               <div className="flex items-center justify-between">
@@ -320,20 +309,18 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* Word Document Content */}
         {fileType === 'word' && (
-          <div className="max-w-4xl mx-auto">
-            <div className="bg-white rounded-xl shadow-lg p-8">
+          <div className={isEmbedded ? "" : "max-w-4xl mx-auto"}>
+            <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
               <div 
                 ref={viewerRef}
-                className="w-full min-h-96 overflow-auto border border-gray-200 rounded-lg p-4"
+                className="w-full min-h-screen" // Use min-h-screen in embedded mode
                 style={{ backgroundColor: 'white' }}
               />
             </div>
           </div>
         )}
 
-        {/* PowerPoint Content */}
         {fileType === 'powerpoint' && (
           <div className="max-w-4xl mx-auto">
             <div className="bg-white rounded-xl shadow-lg p-8">
@@ -351,11 +338,10 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* Excel Content */}
         {excelData && (
-          <div className="max-w-6xl mx-auto">
-            <div className="bg-white rounded-xl shadow-lg p-8">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6">Excel Workbook</h2>
+          <div className={isEmbedded ? "" : "max-w-6xl mx-auto"}>
+            <div className={isEmbedded ? "" : "bg-white rounded-xl shadow-lg p-8"}>
+              {!isEmbedded && <h2 className="text-2xl font-bold text-gray-800 mb-6">Excel Workbook</h2>}
               {Object.entries(excelData).map(([sheetName, sheetData]) => 
                 renderExcelSheet(sheetData, sheetName)
               )}
@@ -363,8 +349,7 @@ const DocumentViewer: React.FC = () => {
           </div>
         )}
 
-        {/* Features List - Only show when no file is loaded */}
-        {!selectedFile && (
+        {!isEmbedded && !selectedFile && (
           <div className="max-w-4xl mx-auto mt-16">
             <div className="grid md:grid-cols-3 gap-8">
               <div className="text-center">
@@ -374,7 +359,6 @@ const DocumentViewer: React.FC = () => {
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">Word Documents</h3>
                 <p className="text-gray-600">View .doc and .docx files with full formatting preserved</p>
               </div>
-              
               <div className="text-center">
                 <div className="bg-green-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                   <FileSpreadsheet className="w-8 h-8 text-green-600" />
@@ -382,7 +366,6 @@ const DocumentViewer: React.FC = () => {
                 <h3 className="text-xl font-semibold text-gray-800 mb-2">Excel Spreadsheets</h3>
                 <p className="text-gray-600">Display .xls and .xlsx files with all worksheets</p>
               </div>
-              
               <div className="text-center">
                 <div className="bg-purple-100 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4">
                   <Presentation className="w-8 h-8 text-purple-600" />
@@ -391,8 +374,6 @@ const DocumentViewer: React.FC = () => {
                 <p className="text-gray-600">Preview .ppt and .pptx presentations</p>
               </div>
             </div>
-
-            {/* Integration Info */}
             <div className="mt-16 bg-gradient-to-r from-blue-50 to-purple-50 rounded-xl p-8">
               <h3 className="text-2xl font-bold text-gray-800 mb-4 text-center">Mobile Integration</h3>
               <div className="grid md:grid-cols-2 gap-8">
